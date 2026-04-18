@@ -102,7 +102,7 @@ async function callGroq(prompt) {
             content: prompt
           }
         ],
-        max_tokens: 3000,
+        max_tokens: 5000,
         temperature: 0.3,
         top_p: 0.9,
       },
