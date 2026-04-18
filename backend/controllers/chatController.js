@@ -27,29 +27,39 @@ function extractCleanQuery(message) {
 // → should search "Vitamin D + lung cancer"
 // ─────────────────────────────────────────────
 function inferDiseaseFromHistory(conversationHistory, storedDisease) {
-  if (storedDisease && storedDisease.trim()) return storedDisease.trim();
+  if (!conversationHistory || conversationHistory.length === 0) {
+    return storedDisease || '';
+  }
 
-  if (!conversationHistory || conversationHistory.length === 0) return '';
-
+  // Look at recent user messages — most recent first
   const recentUserMessages = conversationHistory
     .filter((m) => m.role === 'user')
-    .slice(-3)
+    .reverse() // Most recent first
+    .slice(0, 3)
     .map((m) => m.content || '');
 
-  const diseasePatterns = [
-    /\[Disease:\s*([^\]]+)\]/i,
-    /disease[:\s]+([a-zA-Z\s']+)/i,
-    /condition[:\s]+([a-zA-Z\s']+)/i,
+  // Extract disease from [Disease: xxx] tag — most reliable
+  for (const msg of recentUserMessages) {
+    const match = msg.match(/\[Disease:\s*([^\]]+)\]/i);
+    if (match && match[1]) return match[1].trim();
+  }
+
+  // Extract from natural language — look for known conditions
+  const knownConditions = [
+    'lung cancer', 'parkinson', 'alzheimer', 'diabetes',
+    'heart disease', 'breast cancer', 'covid', 'hypertension',
+    'arthritis', 'stroke', 'depression', 'asthma', 'hiv',
   ];
 
   for (const msg of recentUserMessages) {
-    for (const pattern of diseasePatterns) {
-      const match = msg.match(pattern);
-      if (match && match[1]) return match[1].trim();
+    const lowerMsg = msg.toLowerCase();
+    for (const condition of knownConditions) {
+      if (lowerMsg.includes(condition)) return condition;
     }
   }
 
-  return '';
+  // Fall back to stored disease only if nothing found in recent messages
+  return storedDisease || '';
 }
 
 // ─────────────────────────────────────────────
