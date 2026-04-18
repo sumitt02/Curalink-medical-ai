@@ -66,7 +66,7 @@ function OverviewSection({ structured, queryExpanded }) {
           </p>
           <div
             className={`text-sm text-gray-700 leading-relaxed ${
-              !showFullInsights ? 'line-clamp-4' : ''
+              !showFullInsights ? 'line-clamp-6' : ''
             }`}
             style={{ whiteSpace: 'pre-wrap' }}
           >

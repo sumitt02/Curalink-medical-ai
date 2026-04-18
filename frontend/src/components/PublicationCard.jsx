@@ -25,10 +25,11 @@ function formatAuthors(authors = []) {
   return `${authors.slice(0, 3).join(', ')} et al.`
 }
 
-function truncateAbstract(abstract, maxLen = 200) {
-  if (!abstract) return ''
-  if (abstract.length <= maxLen) return abstract
-  return abstract.slice(0, maxLen).trim() + '...'
+function truncateAbstract(abstract, maxLen = 300) {
+  if (!abstract || abstract.length <= maxLen) return abstract
+  const cut = abstract.slice(0, maxLen)
+  const lastPeriod = cut.lastIndexOf('.')
+  return lastPeriod > 50 ? cut.slice(0, lastPeriod + 1) : cut.trim() + '...'
 }
 
 export default function PublicationCard({ publication, index }) {

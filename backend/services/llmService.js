@@ -206,7 +206,7 @@ function generateFallbackResponse({ disease, query, publications, trials }) {
     `${d} is an active area of medical research with ${pubs.length} relevant publications identified ` +
     `from PubMed and OpenAlex (spanning ${yearRange}). ` +
     (overviewAbstracts
-      ? `Recent literature highlights: ${cutAtSentence(overviewAbstracts, 600)}`
+      ? `Recent literature highlights: ${cutAtSentence(overviewAbstracts, 1200)}`
       : `Current research focuses on improving diagnostic accuracy, therapeutic outcomes, and patient quality of life.`);
 
   const insightLines = pubs.slice(0, 6).map((p) => {
