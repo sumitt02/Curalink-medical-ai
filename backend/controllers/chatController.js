@@ -8,12 +8,10 @@ const { rankPublications, rankTrials } = require('../services/rankingService');
 const { generateStructuredResponse } = require('../services/llmService');
 
 // ─────────────────────────────────────────────
-// Strip [Patient: ...] [Disease: ...] (Location: ...) tags from message
-// These are added by the structured form but should NOT go into search queries
+// Strip [Patient: ...] [Disease: ...] tags from message
 // ─────────────────────────────────────────────
 function extractCleanQuery(message) {
   if (!message) return '';
-  // Remove [Key: value] patterns and (Key: value) patterns
   return message
     .replace(/\[Patient:[^\]]*\]/gi, '')
     .replace(/\[Disease:[^\]]*\]/gi, '')
@@ -23,7 +21,39 @@ function extractCleanQuery(message) {
 }
 
 // ─────────────────────────────────────────────
-// Safely get or create a conversation session
+// Infer disease from conversation history
+// Used for follow-up queries when no disease is explicitly passed
+// e.g. "latest treatment for lung cancer" → "can I take Vitamin D?"
+// → should search "Vitamin D + lung cancer"
+// ─────────────────────────────────────────────
+function inferDiseaseFromHistory(conversationHistory, storedDisease) {
+  if (storedDisease && storedDisease.trim()) return storedDisease.trim();
+
+  if (!conversationHistory || conversationHistory.length === 0) return '';
+
+  const recentUserMessages = conversationHistory
+    .filter((m) => m.role === 'user')
+    .slice(-3)
+    .map((m) => m.content || '');
+
+  const diseasePatterns = [
+    /\[Disease:\s*([^\]]+)\]/i,
+    /disease[:\s]+([a-zA-Z\s']+)/i,
+    /condition[:\s]+([a-zA-Z\s']+)/i,
+  ];
+
+  for (const msg of recentUserMessages) {
+    for (const pattern of diseasePatterns) {
+      const match = msg.match(pattern);
+      if (match && match[1]) return match[1].trim();
+    }
+  }
+
+  return '';
+}
+
+// ─────────────────────────────────────────────
+// Get or create conversation session
 // ─────────────────────────────────────────────
 async function getOrCreateSession(sessionId, disease, patientContext) {
   let conversation = null;
@@ -39,7 +69,7 @@ async function getOrCreateSession(sessionId, disease, patientContext) {
         patientContext: patientContext || {},
       });
     } else {
-      if (disease) conversation.disease = disease;
+      if (disease && disease.trim()) conversation.disease = disease.trim();
       if (patientContext && Object.keys(patientContext).length > 0) {
         conversation.patientContext = {
           ...conversation.patientContext.toObject?.() || conversation.patientContext,
@@ -56,19 +86,16 @@ async function getOrCreateSession(sessionId, disease, patientContext) {
       patientContext: patientContext || {},
       totalTurns: 0,
       getRecentHistory: function (turns = 5) {
-        const userAssistant = this.messages.filter(
-          (m) => m.role === 'user' || m.role === 'assistant'
-        );
-        return userAssistant.slice(-turns * 2);
+        return this.messages
+          .filter((m) => m.role === 'user' || m.role === 'assistant')
+          .slice(-turns * 2);
       },
       addMessage: function (role, content, metadata) {
         this.messages.push({ role, content, timestamp: new Date(), metadata });
         if (role === 'user') this.totalTurns += 1;
         return this;
       },
-      save: async function () {
-        return this;
-      },
+      save: async function () { return this; },
     };
   }
 
@@ -100,36 +127,38 @@ const chat = async (req, res) => {
     }
 
     const sessionId = providedSessionId || uuidv4();
-
     const patientContext = providedPatientContext || {
       patientName: patientName || '',
       location: location || '',
     };
 
-    // ── Clean the query — remove [Patient:...] [Disease:...] tags ──
-    // The structured form puts patient/disease info into the message string.
-    // We must strip these before sending to search APIs, otherwise "john smith"
-    // ends up as a medical search keyword and returns irrelevant papers.
     const cleanQuery = extractCleanQuery(message);
 
     console.log(`\n[Chat] Session: ${sessionId}`);
-    console.log(`[Chat] Disease: ${disease}`);
-    console.log(`[Chat] Raw message: "${message?.substring(0, 80)}"`);
-    console.log(`[Chat] Clean query for APIs: "${cleanQuery}"`);
+    console.log(`[Chat] Disease (from request): "${disease || 'none'}"`);
+    console.log(`[Chat] Clean query: "${cleanQuery}"`);
 
+    // Load conversation — gives us stored disease from previous turns
     const conversation = await getOrCreateSession(sessionId, disease, patientContext);
     const conversationHistory = conversation.getRecentHistory(5);
 
-    // Use cleanQuery for API searches — NOT the raw message
+    // ── Multi-turn context ──
+    // If no disease in this request, inherit from previous turns in this session
+    const effectiveDisease = (disease && disease.trim())
+      ? disease.trim()
+      : inferDiseaseFromHistory(conversationHistory, conversation.disease);
+
+    console.log(`[Chat] Effective disease (with context): "${effectiveDisease}"`);
+
+    // Build search queries using effectiveDisease for context-aware results
     const expandedQueries = expandQuery({
-      disease: disease || '',
+      disease: effectiveDisease,
       query: cleanQuery,
       location: patientContext.location || '',
     });
 
     console.log(`[Chat] Expanded queries ready`);
 
-    // Save original message (with patient info) to conversation history
     conversation.addMessage('user', message || disease, null);
 
     // ── Parallel API fetching ──
@@ -141,22 +170,16 @@ const chat = async (req, res) => {
       fetchFromClinicalTrials(expandedQueries.clinicalTrials, 50),
     ]);
 
-    const pubmedPublications =
-      pubmedResult.status === 'fulfilled' ? pubmedResult.value : [];
-    const openAlexPublications =
-      openAlexResult.status === 'fulfilled' ? openAlexResult.value : [];
-    const rawTrials =
-      clinicalTrialsResult.status === 'fulfilled' ? clinicalTrialsResult.value : [];
+    const pubmedPublications = pubmedResult.status === 'fulfilled' ? pubmedResult.value : [];
+    const openAlexPublications = openAlexResult.status === 'fulfilled' ? openAlexResult.value : [];
+    const rawTrials = clinicalTrialsResult.status === 'fulfilled' ? clinicalTrialsResult.value : [];
 
-    if (pubmedResult.status === 'rejected') {
+    if (pubmedResult.status === 'rejected')
       console.error('[Chat] PubMed fetch failed:', pubmedResult.reason?.message);
-    }
-    if (openAlexResult.status === 'rejected') {
+    if (openAlexResult.status === 'rejected')
       console.error('[Chat] OpenAlex fetch failed:', openAlexResult.reason?.message);
-    }
-    if (clinicalTrialsResult.status === 'rejected') {
+    if (clinicalTrialsResult.status === 'rejected')
       console.error('[Chat] ClinicalTrials fetch failed:', clinicalTrialsResult.reason?.message);
-    }
 
     console.log(
       `[Chat] Raw results - PubMed: ${pubmedPublications.length}, OpenAlex: ${openAlexPublications.length}, Trials: ${rawTrials.length}`
@@ -167,14 +190,12 @@ const chat = async (req, res) => {
     const rankedPublications = rankPublications(allPublications, 8);
     const rankedTrials = rankTrials(rawTrials, 5);
 
-    console.log(
-      `[Chat] Ranked - Publications: ${rankedPublications.length}, Trials: ${rankedTrials.length}`
-    );
+    console.log(`[Chat] Ranked - Publications: ${rankedPublications.length}, Trials: ${rankedTrials.length}`);
 
-    // ── LLM response — pass cleanQuery so LLM focuses on medical topic ──
+    // ── LLM — uses effectiveDisease for personalised response ──
     const llmResponse = await generateStructuredResponse({
-      disease: disease || '',
-      query: cleanQuery || disease || '',
+      disease: effectiveDisease,
+      query: cleanQuery || effectiveDisease || '',
       patientContext,
       publications: rankedPublications,
       trials: rankedTrials,
@@ -197,7 +218,6 @@ const chat = async (req, res) => {
       console.error('[Chat] Failed to save conversation:', saveErr.message);
     }
 
-    // ── Build response ──
     const processingTime = Date.now() - startTime;
 
     const response = {
@@ -205,7 +225,7 @@ const chat = async (req, res) => {
       success: true,
       processingTime: `${processingTime}ms`,
       query: {
-        disease: disease || '',
+        disease: effectiveDisease,
         message: cleanQuery || '',
         location: patientContext.location || '',
       },
@@ -273,26 +293,19 @@ const chat = async (req, res) => {
   }
 };
 
-// POST /api/research — alias for chat
 const research = async (req, res) => {
   req.body.isStructured = true;
   return chat(req, res);
 };
 
-// GET /api/sessions/:sessionId/history
 const getSessionHistory = async (req, res) => {
   try {
     const { sessionId } = req.params;
-
     if (!sessionId) {
-      return res.status(400).json({
-        error: 'Bad Request',
-        message: 'sessionId is required',
-      });
+      return res.status(400).json({ error: 'Bad Request', message: 'sessionId is required' });
     }
 
     const conversation = await Conversation.findOne({ sessionId });
-
     if (!conversation) {
       return res.status(404).json({
         error: 'Not Found',
@@ -330,15 +343,12 @@ const getSessionHistory = async (req, res) => {
   }
 };
 
-// GET /api/sessions
 const listSessions = async (req, res) => {
   try {
     const sessions = await Conversation.find(
       {},
       { sessionId: 1, disease: 1, totalTurns: 1, createdAt: 1, updatedAt: 1 }
-    )
-      .sort({ updatedAt: -1 })
-      .limit(50);
+    ).sort({ updatedAt: -1 }).limit(50);
 
     return res.status(200).json({
       count: sessions.length,
@@ -352,10 +362,7 @@ const listSessions = async (req, res) => {
     });
   } catch (error) {
     console.error('[Sessions] Error:', error);
-    return res.status(500).json({
-      error: 'Internal Server Error',
-      message: error.message,
-    });
+    return res.status(500).json({ error: 'Internal Server Error', message: error.message });
   }
 };
 
