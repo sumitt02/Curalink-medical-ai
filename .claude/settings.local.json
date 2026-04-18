@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ollama --version)",
+      "Bash(ollama serve:*)",
+      "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); print\\('Models:', [m['name'] for m in d.get\\('models',[]\\)]\\)\")",
+      "Bash(pkill -f \"node server.js\")",
+      "Bash(node server.js)",
+      "Bash(curl -s http://localhost:5001/api/health)",
+      "Bash(curl -s -X POST http://localhost:5001/api/chat -H 'Content-Type: application/json' -d '{\"sessionId\":\"test-ollama-001\",\"message\":\"Latest treatment for lung cancer\",\"disease\":\"lung cancer\",\"patientName\":\"John Smith\",\"location\":\"Toronto, Canada\"}')",
+      "Bash(python3 -c ':*)",
+      "Bash(node -e ':*)",
+      "mcp__Claude_Preview__preview_start"
+    ]
+  }
+}
