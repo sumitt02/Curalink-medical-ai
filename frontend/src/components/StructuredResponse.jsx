@@ -19,11 +19,26 @@ const TABS = [
   { id: 'insights', label: 'Insights', icon: Lightbulb },
 ]
 
+// ─────────────────────────────────────────────
+// Strip markdown artifacts from LLM output
+// Removes: **bold**, numbered headings like "1. **CONDITION OVERVIEW**"
+// ─────────────────────────────────────────────
+function cleanLLMText(text) {
+  if (!text) return ''
+  return text
+    .replace(/\*\*(.*?)\*\*/g, '$1')
+    .replace(/\*(.*?)\*/g, '$1')
+    .replace(/^\d+\.\s*(CONDITION OVERVIEW|RESEARCH INSIGHTS|CLINICAL TRIALS SUMMARY|CLINICAL TRIA[^\n]*|RECOMMENDATIONS|DISCLAIMER)[^\n]*\n?/gim, '')
+    .replace(/^#+\s+/gm, '')
+    .trim()
+}
+
 function OverviewSection({ structured, queryExpanded }) {
   const [showFullInsights, setShowFullInsights] = useState(false)
 
-  const overview = structured?.conditionOverview || ''
-  const recommendations = structured?.recommendations || ''
+  const overview = cleanLLMText(structured?.conditionOverview || '')
+  const recommendations = cleanLLMText(structured?.recommendations || '')
+  const researchInsights = cleanLLMText(structured?.researchInsights || '')
 
   return (
     <div className="space-y-4">
@@ -38,7 +53,7 @@ function OverviewSection({ structured, queryExpanded }) {
         </div>
       )}
 
-      {/* Condition Overview — always fully visible, no clamp */}
+      {/* Condition Overview */}
       {overview ? (
         <div>
           <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">
@@ -58,8 +73,8 @@ function OverviewSection({ structured, queryExpanded }) {
         </div>
       )}
 
-      {/* Research Insights summary in Overview tab */}
-      {structured?.researchInsights && (
+      {/* Research Insights summary */}
+      {researchInsights && (
         <div className="border-t border-gray-100 pt-4">
           <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">
             Key Research Findings
@@ -70,7 +85,7 @@ function OverviewSection({ structured, queryExpanded }) {
             }`}
             style={{ whiteSpace: 'pre-wrap' }}
           >
-            {structured.researchInsights}
+            {researchInsights}
           </div>
           <button
             onClick={() => setShowFullInsights(!showFullInsights)}
@@ -104,7 +119,9 @@ function OverviewSection({ structured, queryExpanded }) {
 }
 
 function InsightsSection({ structured }) {
-  const text = structured?.researchInsights || structured?.clinicalTrials || ''
+  const researchInsights = cleanLLMText(structured?.researchInsights || '')
+  const clinicalTrials = cleanLLMText(structured?.clinicalTrials || '')
+  const text = researchInsights || clinicalTrials
 
   if (!text) {
     return (
@@ -117,7 +134,7 @@ function InsightsSection({ structured }) {
 
   return (
     <div className="space-y-3">
-      {structured?.researchInsights && (
+      {researchInsights && (
         <div>
           <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">
             Research Insights
@@ -126,11 +143,11 @@ function InsightsSection({ structured }) {
             className="text-sm text-gray-700 leading-relaxed"
             style={{ whiteSpace: 'pre-wrap' }}
           >
-            {structured.researchInsights}
+            {researchInsights}
           </p>
         </div>
       )}
-      {structured?.clinicalTrials && (
+      {clinicalTrials && (
         <div className="mt-4 pt-4 border-t border-gray-100">
           <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">
             Trial Overview
@@ -139,7 +156,7 @@ function InsightsSection({ structured }) {
             className="text-sm text-gray-700 leading-relaxed"
             style={{ whiteSpace: 'pre-wrap' }}
           >
-            {structured.clinicalTrials}
+            {clinicalTrials}
           </p>
         </div>
       )}
@@ -254,7 +271,7 @@ export default function StructuredResponse({
           <div className="flex items-start gap-2 p-3 bg-gray-50 border border-gray-200 rounded-xl">
             <Shield className="w-3.5 h-3.5 text-gray-400 mt-0.5 flex-shrink-0" />
             <p className="text-xs text-gray-400 leading-relaxed">
-              {structured.disclaimer}
+              {cleanLLMText(structured.disclaimer)}
             </p>
           </div>
         </div>
